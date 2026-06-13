@@ -52,6 +52,17 @@ tui
 start -f stl/udp_for_benchmarks.py -m 100% -p 0 -d 30 -t packet_len=1400
 stats -p 0
 
+## Run interactively (TCP)
+
+  SEND (start first)
+  sudo ./result/bin/_t-rex-64 --cfg $PWD/nix/examples/vhost-user/cfg_send.yaml \
+       --astf -i --lro-disable --tso-disable --software -c 1 --prefix send
+
+  RECV
+  sudo ./result/bin/_t-rex-64 --cfg $PWD/nix/examples/vhost-user/cfg_recv.yaml \
+       --astf --astf-server-only -i --lro-disable --tso-disable --software -c 1 --prefix recv
+
+
 
 ## Run
 
