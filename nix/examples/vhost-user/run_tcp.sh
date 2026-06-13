@@ -13,7 +13,7 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREX=$(readlink -f "${1:-$HERE/../../../result}")
 BIN="$TREX/bin/_t-rex-64"
-OFF="--lro-disable --tso-disable"   # software vdevs don't offer TSO/LRO
+OFF="--lro-disable --tso-disable --queue-drop"  # software vdevs: no TSO/LRO; drop (not spin-retry) on TX-queue-full to avoid the watchdog abort
 # bundled scapy needs python <= 3.12:
 PY=$(command -v python3.12 || command -v python3.11 || true)
 [ -z "$PY" ] && PY="$(nix-build '<nixpkgs>' -A python312 --no-out-link 2>/dev/null)/bin/python3"
