@@ -1,0 +1,181 @@
+diff --git a/linux_dpdk/ws_main.py b/linux_dpdk/ws_main.py
+index 467db1d71..7a381510e 100644
+--- a/linux_dpdk/ws_main.py
++++ b/linux_dpdk/ws_main.py
+@@ -54,7 +54,6 @@ clang_flags = ['-Wno-null-conversion',
+                '-Wno-macro-redefined']
+ 
+ gcc_flags = ['-Wall',
+-             '-Werror',
+              '-Wno-literal-suffix',
+              '-Wno-sign-compare',
+              '-Wno-strict-aliasing',
+@@ -1675,6 +1674,19 @@ dpdk_src = SrcGroup(dir='src/dpdk/',
+                  'drivers/net/virtio/virtio_user/vhost_user.c',
+                  'drivers/net/virtio/virtio_user/virtio_user_dev.c',
+ 
++                 #vhost (net_vhost backend + lib/vhost)
++                 'drivers/net/vhost/rte_eth_vhost.c',
++                 'lib/vhost/fd_man.c',
++                 'lib/vhost/iotlb.c',
++                 'lib/vhost/socket.c',
++                 'lib/vhost/vdpa.c',
++                 'lib/vhost/vhost.c',
++                 'lib/vhost/vhost_user.c',
++                 'lib/vhost/virtio_net.c',
++                 'lib/vhost/virtio_net_ctrl.c',
++                 'lib/dmadev/rte_dmadev.c',
++                 'lib/dmadev/rte_dmadev_trace_points.c',
++
+                  'drivers/net/intel/iavf/iavf_ethdev.c',
+                  'drivers/net/intel/iavf/iavf_rxtx.c',
+                  'drivers/net/intel/iavf/iavf_vchnl.c',
+@@ -2095,8 +2107,8 @@ common_flags = ['-DWIN_UCODE_SIM',
+ 
+ if march == 'x86_64':
+     common_flags_new = common_flags + [
+-                    '-march=native',
+-                    '-mssse3', '-msse4.1', '-mpclmul', '-mno-avx2',
++                    '-march=sandybridge',
++                    '-mssse3', '-msse4.1', '-msse4.2', '-mpclmul', '-maes', '-mavx', '-mno-avx2',
+                     '-DRTE_MACHINE_CPUFLAG_SSE',
+                     '-DRTE_MACHINE_CPUFLAG_SSE2',
+                     '-DRTE_MACHINE_CPUFLAG_SSE3',
+@@ -2282,6 +2294,9 @@ dpdk_includes_path =''' ../src/
+                         ../src/dpdk/lib/mempool/
+                         ../src/dpdk/lib/meter/
+                         ../src/dpdk/lib/net/
++                        ../src/dpdk/lib/vhost/
++                        ../src/dpdk/lib/dmadev/
++                        ../src/dpdk/drivers/net/vhost/
+                         ../src/dpdk/lib/pci/
+                         ../src/dpdk/lib/port/
+                         ../src/dpdk/lib/ring/
+@@ -2567,9 +2582,17 @@ class build_option:
+ 
+         
+     def get_c_flags (self, is_sanitized):
+-        
++
+         flags = self.get_common_flags()
+-        
++
++        # Modern GCC (and the NixOS cc-wrapper) promote these legacy C
++        # constructs to hard errors; TRex's bundled DPDK assumes they are
++        # warnings (as they were for the compiler the release was built with).
++        flags += ['-Wno-error=implicit-function-declaration',
++                  '-Wno-error=implicit-int',
++                  '-Wno-error=int-conversion',
++                  '-Wno-error=incompatible-pointer-types']
++
+         if  self.isRelease () :
+             flags += ['-DNDEBUG']
+ 
+@@ -2605,9 +2628,7 @@ class build_option:
+ 
+ 
+ build_types = [
+-               build_option(debug_mode= DEBUG_, is_pie = False),
+                build_option(debug_mode= RELEASE_, is_pie = False),
+-               build_option(debug_mode= DEBUG_, is_pie = True),
+                build_option(debug_mode= RELEASE_, is_pie = True),
+               ]
+ 
+diff --git a/src/dpdk/lib/vhost/vduse.h b/src/dpdk/lib/vhost/vduse.h
+index 47ca97a06..5eb1d8591 100644
+--- a/src/dpdk/lib/vhost/vduse.h
++++ b/src/dpdk/lib/vhost/vduse.h
+@@ -9,7 +9,18 @@
+ 
+ #define VDUSE_NET_SUPPORTED_FEATURES VIRTIO_NET_SUPPORTED_FEATURES
+ 
+-int vduse_device_create(const char *path, bool compliant_ol_flags);
+-int vduse_device_destroy(const char *path);
++/* TREX/Nix: VDUSE disabled (its kernel uapi header is not bundled). Only the
++ * vhost-user socket transport is used, which never invokes these (they are
++ * called solely for is_vduse sockets). Stub them so vduse.c can be dropped. */
++static inline int vduse_device_create(const char *path, bool compliant_ol_flags)
++{
++	(void)path; (void)compliant_ol_flags;
++	return -1;
++}
++static inline int vduse_device_destroy(const char *path)
++{
++	(void)path;
++	return -1;
++}
+ 
+ #endif /* _VDUSE_H */
+diff --git a/src/drivers/trex_driver_base.cpp b/src/drivers/trex_driver_base.cpp
+index f9ab4a4bc..1e50e4053 100755
+--- a/src/drivers/trex_driver_base.cpp
++++ b/src/drivers/trex_driver_base.cpp
+@@ -162,6 +162,10 @@ CTRexExtendedDriverDb::CTRexExtendedDriverDb() {
+     /* raw socket */
+     register_driver(std::string("net_af_packet"), CTRexExtendedDriverAfPacket::create);
+     register_driver(std::string("net_memif"),CTRexExtendedDriverMemif::create);
++    /* vhost-user vdevs (two TRex instances over a unix socket). Virtio-style
++     * config (mtu 2018, no rx-scatter) but no PCI device. */
++    register_driver(std::string("net_vhost"),CTRexExtendedDriverVhost::create);
++    register_driver(std::string("net_virtio_user"),CTRexExtendedDriverVhost::create);
+     register_driver(std::string("net_tap"),CTRexExtendedDriverAfPacket::create);
+     register_driver(std::string("net_failsafe"),CTRexExtendedDriverAzure::create);
+ 
+diff --git a/src/drivers/trex_driver_virtual.cpp b/src/drivers/trex_driver_virtual.cpp
+index 3ef1fceef..c7e290034 100755
+--- a/src/drivers/trex_driver_virtual.cpp
++++ b/src/drivers/trex_driver_virtual.cpp
+@@ -135,6 +135,11 @@ bool CTRexExtendedDriverVirtio::get_extended_stats(CPhyEthIF * _if,CPhyEthIFStat
+     return get_extended_stats_fixed(_if, stats, 4, 4);
+ }
+ 
++TRexPortAttr* CTRexExtendedDriverVhost::create_port_attr(tvpid_t tvpid, repid_t repid) {
++    /* software vdev (vhost-user): no PCI device, so has_pci = false */
++    return new DpdkTRexPortAttr(tvpid, repid, true, true, true, false, false);
++}
++
+ 
+ CTRexExtendedDriverVmxnet3::CTRexExtendedDriverVmxnet3() {
+     m_cap = tdCAP_ONE_QUE | tdCAP_MULTI_QUE;
+diff --git a/src/drivers/trex_driver_virtual.h b/src/drivers/trex_driver_virtual.h
+index a6ff3e1cc..5be956f7a 100755
+--- a/src/drivers/trex_driver_virtual.h
++++ b/src/drivers/trex_driver_virtual.h
+@@ -58,6 +58,18 @@ public:
+     virtual void update_configuration(port_cfg_t * cfg);
+ };
+ 
++/* TREX/Nix: vhost-user vdevs - net_vhost (backend) and net_virtio_user (frontend),
++ * used to wire two TRex instances together over a unix socket. Same queue/offload
++ * configuration as virtio, but these are pure software vdevs with no PCI device. */
++class CTRexExtendedDriverVhost : public CTRexExtendedDriverVirtio {
++public:
++    CTRexExtendedDriverVhost() {}
++    static CTRexExtendedDriverBase * create(){
++        return ( new CTRexExtendedDriverVhost() );
++    }
++    virtual TRexPortAttr* create_port_attr(tvpid_t tvpid, repid_t repid);
++};
++
+ class CTRexExtendedDriverVmxnet3 : public CTRexExtendedDriverVirtBase {
+ public:
+     CTRexExtendedDriverVmxnet3();
+diff --git a/src/pal/linux_dpdk/dpdk_2507_x86_64/rte_build_config.h b/src/pal/linux_dpdk/dpdk_2507_x86_64/rte_build_config.h
+index 3a3998638..93adbfbed 100644
+--- a/src/pal/linux_dpdk/dpdk_2507_x86_64/rte_build_config.h
++++ b/src/pal/linux_dpdk/dpdk_2507_x86_64/rte_build_config.h
+@@ -181,9 +181,12 @@
+ 
+ #define RTE_LIBRTE_DPAA2_USE_PHYS_IOVA
+ 
+-#define RTE_LIBRTE_VHOST_NUMA 1
++/* TREX/Nix: disabled to avoid libnuma / userfaultfd build deps for lib/vhost.
++ * NUMA-aware vring placement and postcopy live-migration are not needed for the
++ * vhost-user loadgen use case. */
++/* #define RTE_LIBRTE_VHOST_NUMA 1 */
+ 
+-#define RTE_LIBRTE_VHOST_POSTCOPY
++/* #define RTE_LIBRTE_VHOST_POSTCOPY */
+ 
+ #define RTE_LIB_ACL 1
+ 

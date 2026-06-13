@@ -1,0 +1,12 @@
+### TRex instance "RECV" - net_vhost backend. vhost-user CLIENT (connects to the socket, auto-reconnects).
+- port_limit      : 2
+  version         : 2
+  interfaces      : ["--vdev=net_vhost0,iface=/tmp/trex-vhost.sock,client=1", "dummy"]
+  zmq_pub_port    : 4500
+  zmq_rpc_port    : 4501
+  ext_dpdk_opt    : ["--iova-mode=va"]
+  port_info       :
+        - ip         : 1.1.1.1
+          default_gw : 1.1.1.2
+        - ip         : 1.1.2.1
+          default_gw : 1.1.2.2

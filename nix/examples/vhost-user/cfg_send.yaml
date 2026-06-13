@@ -1,0 +1,12 @@
+### TRex instance "SEND" - virtio-user frontend. vhost-user SERVER (creates + listens on the socket; start this one first).
+- port_limit      : 2
+  version         : 2
+  interfaces      : ["--vdev=net_virtio_user0,path=/tmp/trex-vhost.sock,server=1", "dummy"]
+  zmq_pub_port    : 4520
+  zmq_rpc_port    : 4521
+  ext_dpdk_opt    : ["--iova-mode=va", "--single-file-segments"]
+  port_info       :
+        - ip         : 1.1.1.2
+          default_gw : 1.1.1.1
+        - ip         : 1.1.2.2
+          default_gw : 1.1.2.1
